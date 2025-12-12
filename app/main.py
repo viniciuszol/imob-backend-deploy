@@ -30,16 +30,17 @@ app = FastAPI(title="ImobInvest API")
 # CORS — NECESSÁRIO para permitir POST do frontend
 # ----------------------------------------------
 origins = [
-    "http://localhost:5173",   # Vite frontend
-    "http://127.0.0.1:5173"
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://main.d2byrs9y98woub.amplifyapp.com"
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # frontend permitido
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],         # <- ESSENCIAL para liberar OPTIONS
-    allow_headers=["*"],         # <- ESSENCIAL
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Criar tabelas em dev
