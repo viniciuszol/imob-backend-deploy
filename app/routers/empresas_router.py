@@ -1,5 +1,5 @@
 # app/routers/empresas.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db
@@ -9,6 +9,7 @@ from app.services.nibo_service import nibo_service
 from app.services.nibo_import_service import nibo_import_service
 from app.services.nibo_refresh_service import refresh_ativos
 from app import schemas
+from app.database import SessionLocal
 
 router = APIRouter(prefix="/empresas", tags=["Empresas"])
 
@@ -54,9 +55,29 @@ def create_empresa(
 # ---------------------------------------------------------------------------
 #  IMPORTAÇÃO DO NIBO (o endpoint principal)
 # ---------------------------------------------------------------------------
+# -------------------------------------------------
+# Wrapper seguro para background task
+# -------------------------------------------------
+async def importar_empresa_background(token: str, usuario_id: int, empresa_data: dict):
+    db = SessionLocal()
+    try:
+        await nibo_import_service.importar(
+            db=db,
+            token=token,
+            usuario_id=usuario_id,
+            empresa_data=empresa_data
+        )
+    finally:
+        db.close()
+
+
+# -------------------------------------------------
+# ROTA IMPORTAR (NÃO BLOQUEANTE)
+# -------------------------------------------------
 @router.post("/importar")
 async def importar_empresa(
     body: schemas.EmpresaImportToken,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -66,27 +87,29 @@ async def importar_empresa(
     try:
         profile = await nibo_service.get_empresa_profile(token)
     except Exception as e:
-        raise HTTPException(400, f"Token Nibo inválido ou perfil inacessível: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Token Nibo inválido ou perfil inacessível: {str(e)}"
+        )
 
     # 2. Validar dados críticos
     if not profile.get("cnpj") or not profile.get("companyId"):
         raise HTTPException(
-            400,
-            "Perfil Nibo incompleto: CNPJ ou Company ID ausente."
+            status_code=400,
+            detail="Perfil Nibo incompleto: CNPJ ou Company ID ausente."
         )
 
-    # 3. Verifica se a empresa já existe para este usuário
+    # 3. Verifica se a empresa já existe
     empresa = db.query(Empresa).filter(
         Empresa.cnpj == profile["cnpj"],
         Empresa.usuario_id == current_user.id
     ).first()
 
     if not empresa:
-        # Se não existir, cria
         empresa = Empresa(
             nome=profile.get("nome", "Importada Nibo"),
-            cnpj=profile.get("cnpj"),
-            nibo_company_id=profile.get("companyId"),
+            cnpj=profile["cnpj"],
+            nibo_company_id=profile["companyId"],
             nibo_api_token=token,
             usuario_id=current_user.id
         )
@@ -94,7 +117,6 @@ async def importar_empresa(
         db.commit()
         db.refresh(empresa)
     else:
-        # Se já existir, apenas atualiza o token
         empresa.nibo_api_token = token
         db.commit()
         db.refresh(empresa)
@@ -105,17 +127,20 @@ async def importar_empresa(
         "companyId": empresa.nibo_company_id
     }
 
-    # 4. Importar dados do Nibo usando o token
-    resultado = await nibo_import_service.importar(
-        db=db,
-        token=token,
-        usuario_id=current_user.id,
-        empresa_data=empresa_data
+    # 4. 🔥 DISPARA IMPORTAÇÃO EM BACKGROUND
+    background_tasks.add_task(
+        importar_empresa_background,
+        token,
+        current_user.id,
+        empresa_data
     )
 
+    # 5. RESPONDE IMEDIATAMENTE
     return {
-        "empresa": empresa,
-        "resultado": resultado
+        "status": "processando",
+        "empresa_id": empresa.id,
+        "empresa_nome": empresa.nome,
+        "message": "Importação iniciada em background"
     }
 
 @router.post("/{empresa_id}/refresh")
