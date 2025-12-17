@@ -101,7 +101,6 @@ class NiboImportService:
 
         map_ativos = {}
 
-        # carregar ativos já existentes
         existentes_query = db.query(Ativo).filter(
             Ativo.empresa_id == empresa.id,
             Ativo.usuario_id == usuario_id
@@ -155,7 +154,6 @@ class NiboImportService:
                 map_ativos[key] = ativo_existente.id
                 continue
 
-            # criar ativo
             try:
                 ativo = Ativo(
                     usuario_id=usuario_id,
@@ -194,7 +192,6 @@ class NiboImportService:
                 db.rollback()
                 continue
 
-        # criar ativo SEM CC
         ativo_sem_cc = db.query(Ativo).filter_by(
             usuario_id=usuario_id,
             empresa_id=empresa.id,
@@ -253,8 +250,9 @@ class NiboImportService:
                 if not isinstance(item, dict):
                     continue
 
-                # ignorar transferências internas
-                if item.get("isTransfer") in (True, "true", "True", 1, "1"):
+                # ✅ CORREÇÃO DEFINITIVA
+                # somente movimentações com isTransfer == False entram
+                if item.get("isTransfer") is not False:
                     continue
 
                 cc_field = (
@@ -285,7 +283,6 @@ class NiboImportService:
 
                 data_mov = parse_date(data_raw)
 
-                # atualiza movimentação já existente
                 if existente:
                     if not db.query(MovimentacaoAtivo).filter_by(
                         movimentacao_id=existente.id,
@@ -299,9 +296,6 @@ class NiboImportService:
                         ))
                     continue
 
-                # ----------------------------------------
-                # CRIAR NOVA MOVIMENTAÇÃO
-                # ----------------------------------------
                 mov = Movimentacao(
                     usuario_id=usuario_id,
                     ativo_id=ativo_id,
@@ -317,7 +311,6 @@ class NiboImportService:
                 db.add(mov)
                 db.flush()
 
-                # vincular ao ativo
                 db.add(MovimentacaoAtivo(
                     movimentacao_id=mov.id,
                     ativo_id=ativo_id,
@@ -326,7 +319,6 @@ class NiboImportService:
                 ))
                 db.flush()
 
-                # atualizar resumo do ativo
                 ativo = db.query(Ativo).filter_by(id=ativo_id).first()
                 if ativo:
                     if valor >= 0:
@@ -358,12 +350,11 @@ class NiboImportService:
         db.commit()
 
         # ----------------------------------------
-        # CÁLCULO DO CDI — UMA ÚNICA VEZ (OPÇÃO A)
+        # CÁLCULO DO CDI
         # ----------------------------------------
         try:
             investimento_cdi_service.recalcular_investimentos_cdi_empresa(db, empresa.id)
         except Exception as e:
-            # não quebra o import caso dê erro no CDI
             print("Erro ao recalcular investimentos CDI na importação:", e)
 
         ativos_importados = (

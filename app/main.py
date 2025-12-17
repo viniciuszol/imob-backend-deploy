@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine, Base
 
+# MODELS (importados para garantir criação das tabelas)
 from app.models.user import User
 from app.models.user_empresa import UserEmpresa
 from app.models.empresa import Empresa
@@ -13,7 +14,7 @@ from app.models.cdi import CDI
 from app.models.movimentacao_ativo import MovimentacaoAtivo
 from app.models.investimento_cdi import InvestimentoCDI
 
-
+# ROUTERS
 from app.routers import (
     auth_router,
     ativos_router,
@@ -24,15 +25,18 @@ from app.routers import (
     investimento_cdi_router,
 )
 
+# SEED
+from app.seeds.cdi_seed import seed_cdi
+
+
 app = FastAPI(title="ImobInvest API")
 
 # ----------------------------------------------
 # CORS — NECESSÁRIO para permitir POST do frontend
 # ----------------------------------------------
 origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://main.d2byrs9y98woub.amplifyapp.com"
+    "http://localhost:5173",   # Vite frontend
+    "http://127.0.0.1:5173"
 ]
 
 app.add_middleware(
@@ -43,10 +47,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Criar tabelas em dev
-Base.metadata.create_all(bind=engine)
+# ----------------------------------------------
+# STARTUP EVENT
+# ----------------------------------------------
+@app.on_event("startup")
+def on_startup():
+    try:
+        # Garante que as tabelas existam (DEV)
+        Base.metadata.create_all(bind=engine)
 
+        # Executa seed de CDI (idempotente)
+        seed_cdi()
+
+    except Exception as e:
+        print(f"❌ Erro no startup da aplicação: {e}")
+        # Impede subir backend em estado inconsistente
+        raise
+
+
+# ----------------------------------------------
 # Registrar rotas
+# ----------------------------------------------
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
 app.include_router(empresas_router.router)
